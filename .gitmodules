@@ -1,0 +1,3 @@
+[submodule "Injector/SimpleIni"]
+	path = Injector/SimpleIni
+	url = https://github.com/brofield/simpleini
