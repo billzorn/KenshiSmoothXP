@@ -1,3 +1,6 @@
 [submodule "Injector/SimpleIni"]
 	path = Injector/SimpleIni
 	url = https://github.com/brofield/simpleini
+[submodule "Kenshi200Lvl/SimpleIni"]
+	path = Kenshi200Lvl/SimpleIni
+	url = https://github.com/brofield/simpleini
