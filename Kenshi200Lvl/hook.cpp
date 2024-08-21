@@ -105,11 +105,3 @@ DWORD FindPatternInFile(const string& filename, const span<const BYTE>& pattern,
 
     return 0;
 }
-
-bool IsHotkeyPressed(const vector<int>& keys)
-{
-    return all_of(keys.begin(), keys.end(), [](int vkCode)
-    {
-        return (GetAsyncKeyState(vkCode) & 0x8000) != 0;
-    });
-}
