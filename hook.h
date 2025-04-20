@@ -1,7 +1,6 @@
-#ifndef HOOK_H
-#define HOOK_H
+#pragma once
 
-#include <Windows.h>
+#include "framework.h"
 #include <vector>
 #include <string>
 #include <span>
@@ -12,5 +11,3 @@ void CreateConsoleWindow();
 void DestroyConsoleWindow();
 DWORD RvaToOffset(DWORD rva, PIMAGE_SECTION_HEADER sectionHeader, unsigned int numberOfSections);
 DWORD FindPatternInFile(const string& filename, const span<const BYTE>& pattern, const char* mask);
-
-#endif

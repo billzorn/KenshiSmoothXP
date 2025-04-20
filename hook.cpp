@@ -1,6 +1,6 @@
 #define _CRT_SECURE_NO_WARNINGS
 
-#include <hook.h>
+#include "hook.h"
 #include <MinHook.h>
 #include <algorithm>
 #include <thread>

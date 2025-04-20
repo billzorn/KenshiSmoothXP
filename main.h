@@ -1,7 +1,7 @@
-#ifndef MAIN_H
-#define MAIN_H
+#pragma once
 
-#include <Windows.h>
+#include "framework.h"
+
 #include <cstdio>
 #include <iostream>
 #include <cstdlib>
@@ -11,8 +11,6 @@
 #include <psapi.h>
 #include <unordered_set>
 #include <algorithm>
-#include <MinHook.h>
-#include <SimpleIni.h>
 #include <random>
 #include <fstream>
 #include <cmath>
@@ -24,7 +22,7 @@
 
 //
 
-#include <utils.h>
-#include <hook.h>
-
-#endif
+#include <MinHook.h>
+#include "SimpleIni.h"
+#include "utils.h"
+#include "hook.h"
