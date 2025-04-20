@@ -252,6 +252,9 @@ void MainThreadFunction(HMODULE hModule)
     {
         CreateConsoleWindow();
 
+        ConsoleOut("Hello World from KenshiSmoothXP");
+        ConsoleOut("");
+
         if (configExists)
         {
             ConsoleOut("Loading config from: %s ...", modConfig.configPath.c_str());
