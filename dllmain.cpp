@@ -1,10 +1,16 @@
 #include "mod.h"
 
+typedef void (*OriginalFunctionType)(float*, float, float);
+
 class ModData
 {
 public:
     LPVOID TargetProcessAbsoluteAddr = 0x0;
+    OriginalFunctionType originalFunction = nullptr;
+    bool hookEnabled = FALSE;
 
+    pcg32 rng;
+    bool rngNeedsInit = TRUE;
 } modData;
 
 mutex modDataMutex;
@@ -53,9 +59,6 @@ const char LEVELING_FUNCTION_MASK[] =
 
 //
 
-typedef void (*OriginalFunctionType)(float*, float, float);
-OriginalFunctionType originalFunction = nullptr;
-
 void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float factor2)
 {
     float oldPointerValue = *valuePointer;
@@ -82,10 +85,21 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
     else {
         ConsoleOut("  NOP    vp=%.8f", *valuePointer);
     }
+
+    if (modData.rngNeedsInit) {
+        ConsoleOut("    RNG NOT INITED ???");
+    }
+    else {
+        uint32_t random_bias = modData.rng() >> 3;
+        ConsoleOut("    RBIAS %8x", random_bias);
+    }
+
     ConsoleOut("");
 }
 
-//
+// take the lock on modData before calling these;
+// the functions do not take the lock themselves to avoid
+// interacting with it recursively
 
 bool SetupLevelingHook(LPVOID absoluteAddr)
 {
@@ -95,7 +109,7 @@ bool SetupLevelingHook(LPVOID absoluteAddr)
         return false;
     }
 
-    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&originalFunction) != MH_OK)
+    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&modData.originalFunction) != MH_OK)
     {
         cerr << "Failed to create the hook." << endl;
         return false;
@@ -112,6 +126,7 @@ bool EnableLevelingHook(LPVOID absoluteAddr)
         return false;
     }
 
+    modData.hookEnabled = TRUE;
     return true;
 }
 
@@ -123,13 +138,17 @@ bool DisableLevelingHook(LPVOID absoluteAddr)
         return false;
     }
 
+    modData.hookEnabled = FALSE;
     return true;
 }
 
 void DetachDLL(LPVOID absoluteAddr, HMODULE hModule)
 {
-    if (absoluteAddr) DisableLevelingHook(absoluteAddr);
-    FreeLibraryAndExitThread(hModule, 0);
+	if (modData.hookEnabled && absoluteAddr)
+	{
+		DisableLevelingHook(absoluteAddr);
+	}
+	FreeLibraryAndExitThread(hModule, 0);
 }
 
 //
@@ -143,8 +162,6 @@ void MainThreadFunction(HMODULE hModule)
 
     //
 
-    CreateConsoleWindow();
-
     ConsoleOut("Hello World from KenshiSmoothXP");
     ConsoleOut("");
 
@@ -153,11 +170,16 @@ void MainThreadFunction(HMODULE hModule)
     DWORD relativeAddr = FindPatternInFile(exePath, LEVELING_FUNCTION_PATTERN, LEVELING_FUNCTION_MASK);
     if (relativeAddr)
     {
+        lock_guard<mutex> lock(modDataMutex);
+
         modData.TargetProcessAbsoluteAddr = (LPVOID)(relativeAddr + (DWORD_PTR)GetModuleHandleA(exeName.c_str()));
         if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr))
         {
             ConsoleOut("Enabling hook...");
             EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
+
+            ConsoleOut("Target address: %16lx", modData.TargetProcessAbsoluteAddr);
+            ConsoleOut("Original fn:    %16lx", modData.originalFunction);
 
             ConsoleOut("Function successfully hooked. Do not close this window.");
             ConsoleOut("");
@@ -169,11 +191,6 @@ void MainThreadFunction(HMODULE hModule)
     else {
         ConsoleOut("Error: Cannot find target function in %s", exePath);
     }
-
-    //// I'm not sure if we needed the while(sleep) forever here...
-    //DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
-    //this_thread::sleep_for(chrono::milliseconds(200));
-    //exit(1);
 }
 
 extern "C" void __declspec(dllexport) dllStartPlugin(void)
@@ -189,9 +206,45 @@ BOOL APIENTRY DllMain( HMODULE hModule,
     switch (ul_reason_for_call)
     {
     case DLL_PROCESS_ATTACH:
+    {
+        lock_guard<mutex> lock(modDataMutex);
+
+        CreateConsoleWindow();
+
+        ConsoleOut("DLL_PROCESS_ATTACH");
+
+        if (modData.rngNeedsInit) {
+            pcg_extras::seed_seq_from<random_device> seed_source;
+            modData.rng.seed(seed_source);
+            modData.rngNeedsInit = FALSE;
+            ConsoleOut("-- thread id %d inited rng --", this_thread::get_id());
+        }
+
+        ConsoleOut("");
+    }
+        break;
     case DLL_THREAD_ATTACH:
+    {
+        // ConsoleOut("DLL_THREAD_ATTACH");
+    }
+        break;
     case DLL_THREAD_DETACH:
+    {
+        // ConsoleOut("DLL_THREAD_DETACH");
+    }
+        break;
     case DLL_PROCESS_DETACH:
+    {
+        lock_guard<mutex> lock(modDataMutex);
+
+        ConsoleOut("DLL_PROCESS_DETACH");
+
+        // not clear if this is doing anything, or if it even needs to...
+        DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
+
+        ConsoleOut("detached and unhooked...");
+        ConsoleOut("");
+    }
         break;
     }
     return TRUE;
