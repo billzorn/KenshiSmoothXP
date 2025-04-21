@@ -23,6 +23,5 @@
 //
 
 #include <MinHook.h>
-#include "SimpleIni.h"
 #include "utils.h"
 #include "hook.h"

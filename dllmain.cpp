@@ -1,7 +1,5 @@
 // dllmain.cpp : Defines the entry point for the DLL application.
-#include "main.h"
-
-using namespace std;
+#include "mod.h"
 
 class ModData
 {
@@ -10,31 +8,7 @@ public:
 
 } modData;
 
-class ModConfig
-{
-public:
-    bool ModEnabled = true;
-    float MaxLevel = 201.0f;
-    float FadeLevel = 65.0f;
-    bool ShowConsole = false;
-
-    string configPath;
-    time_t configLastEditTimestamp = 0;
-
-    ModConfig()
-    {
-    }
-
-    ModConfig(bool modEnabled, float maxLevel, float fadeLevel, bool showConsole)
-    {
-        ModEnabled = modEnabled;
-        MaxLevel = maxLevel;
-        FadeLevel = fadeLevel;
-        ShowConsole = showConsole;
-    }
-} modConfig;
-
-mutex modConfigAndDataMutex;
+mutex modDataMutex;
 
 vector<BYTE> LEVELING_FUNCTION_PATTERN = {
 
@@ -85,30 +59,31 @@ OriginalFunctionType originalFunction = nullptr;
 
 void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float factor2)
 {
-    lock_guard<mutex> lock(modConfigAndDataMutex);
+    float oldPointerValue = *valuePointer;
 
     float val;
     const float invFactor2 = 1.0f / factor2;
 
-    if (*valuePointer < modConfig.FadeLevel)
-    {
-        float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
-        val = normalizedDifference * normalizedDifference;
-    }
-    else
-    {
-        float normalizedProgress = (*valuePointer - modConfig.FadeLevel) / (modConfig.MaxLevel - modConfig.FadeLevel);
-        float baseDifficulty = (factor2 - modConfig.FadeLevel) * invFactor2;
-        baseDifficulty *= baseDifficulty;
-
-        val = baseDifficulty * (1.0f - normalizedProgress);
-    }
+    float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
+    val = normalizedDifference * normalizedDifference;
 
     // NaN Check
     if (val == val && val > 0.0f && factor1 > 0.0f && factor1 <= 20.0f && val <= 20.0f)
     {
         *valuePointer += val * factor1;
     }
+
+    lock_guard<mutex> lock(modDataMutex);
+
+    ConsoleOut("ADJUST   vp=%.8f, f1=%.8f, f2=%.8f", oldPointerValue, factor1, factor2);
+    ConsoleOut("  INC     +=%.8f, lm=%.8f", val * factor1, val);
+    if (oldPointerValue != *valuePointer) {
+        ConsoleOut("  UPDATE vp=%.8f", *valuePointer);
+    }
+    else {
+        ConsoleOut("  NOP    vp=%.8f", *valuePointer);
+    }
+    ConsoleOut("");
 }
 
 //
@@ -160,121 +135,19 @@ void DetachDLL(LPVOID absoluteAddr, HMODULE hModule)
 
 //
 
-void UpdateModConfigAndData()
-{
-    if (!filesystem::exists(modConfig.configPath)) return;
-
-    time_t editTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
-    if (editTimestamp == modConfig.configLastEditTimestamp) return;
-
-    modConfig.configLastEditTimestamp = editTimestamp;
-
-    CSimpleIniA ini;
-    ini.SetUnicode();
-
-    SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
-    if (rc != SI_OK) return;
-
-    unique_lock<mutex> lock(modConfigAndDataMutex);
-
-    bool lastModEnabledState = modConfig.ModEnabled;
-
-    modConfig.ModEnabled = !!ini.GetLongValue("Parameters", "Enabled", modConfig.ModEnabled);
-    modConfig.MaxLevel = max<float>((float)ini.GetDoubleValue("Parameters", "Max Level", modConfig.MaxLevel), 101.0f);
-    modConfig.FadeLevel = clamp<float>((float)ini.GetDoubleValue("Parameters", "Fade Level", modConfig.FadeLevel), 0.0f, 101.0f);
-
-    if (modConfig.ModEnabled != lastModEnabledState)
-    {
-        if (modConfig.ModEnabled)
-        {
-            EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
-        }
-        else
-        {
-            DisableLevelingHook(modData.TargetProcessAbsoluteAddr);
-        }
-    }
-
-    lock.unlock();
-
-    if (modConfig.ShowConsole) // The console open only on start and this value sets only on start too
-    {
-        auto currentZone = chrono::current_zone();
-
-        auto now = chrono::system_clock::now();
-        chrono::zoned_time localTime(currentZone, now);
-
-        //
-
-        long long totalMilliseconds = chrono::duration_cast<chrono::milliseconds>(localTime.get_local_time().time_since_epoch()).count();
-
-        int hour = (totalMilliseconds / 3600000) % 24;
-        int minute = (totalMilliseconds / 60000) % 60;
-        int second = (totalMilliseconds / 1000) % 60;
-        int millisecond = totalMilliseconds % 1000;
-
-        ConsoleOut("[%02d:%02d:%02d.%03d] Config updated", hour, minute, second, millisecond);
-    }
-}
-
 void MainThreadFunction(HMODULE hModule)
 {
     char exePath[MAX_PATH];
     GetModuleFileNameA(NULL, exePath, MAX_PATH);
     string directory = filesystem::path(exePath).parent_path().string();
-
-    string configPath = PathCombine(directory, "Kenshi200Lvl_config.ini");
-    modConfig.configPath = configPath;
-
     string exeName = filesystem::path(exePath).filename().generic_string();
 
     //
 
-    bool configExists = filesystem::exists(modConfig.configPath);
-    if (configExists)
-    {
-        CSimpleIniA ini;
-        ini.SetUnicode();
+    CreateConsoleWindow();
 
-        modConfig.configLastEditTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
-
-        SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
-        if (rc == SI_OK)
-        {
-            modConfig.ModEnabled = !!ini.GetLongValue("Parameters", "Enabled", modConfig.ModEnabled);
-            modConfig.MaxLevel = max<float>((float)ini.GetDoubleValue("Parameters", "Max Level", modConfig.MaxLevel), 101.0f);
-            modConfig.FadeLevel = clamp<float>((float)ini.GetDoubleValue("Parameters", "Fade Level", modConfig.FadeLevel), 0.0f, 101.0f);
-            modConfig.ShowConsole = !!ini.GetLongValue("Parameters", "Debug Console", modConfig.ShowConsole);
-        }
-    }
-
-    if (modConfig.ShowConsole)
-    {
-        CreateConsoleWindow();
-
-        ConsoleOut("Hello World from KenshiSmoothXP");
-        ConsoleOut("");
-
-        if (configExists)
-        {
-            ConsoleOut("Loading config from: %s ...", modConfig.configPath.c_str());
-            ConsoleOut("Config processed");
-        }
-        else
-        {
-            ConsoleOut("CONFIG NOT FOUND: %s", modConfig.configPath.c_str());
-            ConsoleOut("Using default values");
-        }
-
-        ConsoleOut("");
-        ConsoleOut("Game path: %s", exePath);
-        ConsoleOut("Game process: %s", exeName.c_str());
-
-        ConsoleOut("");
-        ConsoleOut("Max Level: %s", FormatDouble(modConfig.MaxLevel, 4).c_str());
-        ConsoleOut("Fade Level: %s", FormatDouble(modConfig.FadeLevel, 4).c_str());
-        ConsoleOut("");
-    }
+    ConsoleOut("Hello World from KenshiSmoothXP");
+    ConsoleOut("");
 
     //
 
@@ -284,26 +157,24 @@ void MainThreadFunction(HMODULE hModule)
         modData.TargetProcessAbsoluteAddr = (LPVOID)(relativeAddr + (DWORD_PTR)GetModuleHandleA(exeName.c_str()));
         if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr))
         {
-            if (modConfig.ShowConsole) ConsoleOut("Function successfully hooked. Do not close this window");
+            ConsoleOut("Enabling hook...");
+            EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
 
-            if (modConfig.ModEnabled)
-            {
-                EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
-            }
-
-            while (true)
-            {
-                this_thread::sleep_for(chrono::milliseconds(1000));
-                UpdateModConfigAndData();
-            }
+            ConsoleOut("Function successfully hooked. Do not close this window.");
+            ConsoleOut("");
+        }
+        else {
+            ConsoleOut("Failed to set up hook.");
         }
     }
+    else {
+        ConsoleOut("Error: Cannot find target function in %s", exePath);
+    }
 
-    if (modConfig.ShowConsole) ConsoleOut("Error: Cannot find target function in %s", exePath);
-
-    DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
-    this_thread::sleep_for(chrono::milliseconds(200));
-    exit(1);
+    //// I'm not sure if we needed the while(sleep) forever here...
+    //DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
+    //this_thread::sleep_for(chrono::milliseconds(200));
+    //exit(1);
 }
 
 extern "C" void __declspec(dllexport) dllStartPlugin(void)
