@@ -1,8 +1,22 @@
-#include <iomanip>
-#include <sstream>
-#include <chrono>
-
 #include "utils.h"
+
+void CreateConsoleWindow()
+{
+    AllocConsole();
+
+    FILE* instream, * outstream, * errstream;
+    static_cast<void>(freopen_s(&instream, "CONIN$", "r", stdin));
+    static_cast<void>(freopen_s(&outstream, "CONOUT$", "w", stdout));
+    static_cast<void>(freopen_s(&errstream, "CONOUT$", "w", stderr));
+}
+
+void DestroyConsoleWindow()
+{
+    FreeConsole();
+    fclose(stdin);
+    fclose(stdout);
+    fclose(stderr);
+}
 
 string PathCombine(const string& path1, const string& path2)
 {

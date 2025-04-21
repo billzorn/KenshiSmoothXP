@@ -1,13 +1,14 @@
 #pragma once
 
-#include "framework.h"
+#include <MinHook.h>
+
 #include <vector>
 #include <string>
 #include <span>
+#include <fstream>
+#include <iostream>
 
 using namespace std;
 
-void CreateConsoleWindow();
-void DestroyConsoleWindow();
 DWORD RvaToOffset(DWORD rva, PIMAGE_SECTION_HEADER sectionHeader, unsigned int numberOfSections);
 DWORD FindPatternInFile(const string& filename, const span<const BYTE>& pattern, const char* mask);
