@@ -172,6 +172,7 @@
   <ItemGroup>
     <ClInclude Include="framework.h" />
     <ClInclude Include="hook.h" />
+    <ClInclude Include="lvlmult.hpp" />
     <ClInclude Include="mod.h" />
     <ClInclude Include="utils.h" />
   </ItemGroup>
