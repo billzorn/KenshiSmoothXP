@@ -1,5 +1,24 @@
 #include "mod.h"
 
+class ModConfig
+{
+public:
+    string configName = "KenshiSmoothXP.ini";
+    string configPath;
+    time_t configLastEditTimestamp = 0;
+
+    bool ShowConsole = FALSE;
+
+    ModConfig()
+    {
+    }
+
+    ModConfig(bool showConsole)
+    {
+        ShowConsole = showConsole;
+    }
+} modConfig;
+
 typedef void (*OriginalFunctionType)(float*, float, float);
 
 class ModData
@@ -10,9 +29,9 @@ public:
     bool hookEnabled = FALSE;
 
     pcg32 rng;
-    bool rngNeedsInit = TRUE;
 } modData;
 
+bool modNeedsInit = TRUE;
 mutex modDataMutex;
 
 vector<BYTE> LEVELING_FUNCTION_PATTERN = {
@@ -86,8 +105,8 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
         ConsoleOut("  NOP    vp=%.8f", *valuePointer);
     }
 
-    if (modData.rngNeedsInit) {
-        ConsoleOut("    RNG NOT INITED ???");
+    if (modNeedsInit) {
+        ConsoleOut("    MOD NOT INITED ???");
     }
     else {
         uint32_t random_bias = modData.rng() >> 3;
@@ -155,15 +174,60 @@ void DetachDLL(LPVOID absoluteAddr, HMODULE hModule)
 
 void MainThreadFunction(HMODULE hModule)
 {
+	// make sure the process attach entrypoint has initialized the mod first
+	bool waitForInit = TRUE;
+	while (waitForInit) {
+		{ lock_guard<mutex> lock(modDataMutex); waitForInit = modNeedsInit; }
+		if (waitForInit) {
+			ConsoleOut("sleep 100ms waiting for mod init...");
+			this_thread::sleep_for(chrono::milliseconds(100));
+		}
+	}
+	ConsoleOut("Hello World from KenshiSmoothXP");
+	ConsoleOut("");
+
+    //
+
     char exePath[MAX_PATH];
     GetModuleFileNameA(NULL, exePath, MAX_PATH);
     string directory = filesystem::path(exePath).parent_path().string();
     string exeName = filesystem::path(exePath).filename().generic_string();
+    {
+        lock_guard<mutex> lock(modDataMutex);
 
-    //
+        string configPath = PathCombine(directory, modConfig.configName);
+        bool configExists = filesystem::exists(configPath);
+        if (configExists)
+        {
+            // read the config
 
-    ConsoleOut("Hello World from KenshiSmoothXP");
-    ConsoleOut("");
+            CSimpleIniA ini;
+            ini.SetUnicode();
+
+            modConfig.configPath = configPath;
+            modConfig.configLastEditTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
+
+            SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
+            if (rc == SI_OK)
+            {
+                modConfig.ShowConsole = !!ini.GetLongValue("Parameters", "Debug Console", modConfig.ShowConsole);
+
+                ConsoleOut("Loaded config, ShowConsole=%d", modConfig.ShowConsole);
+            }
+            else {
+                ConsoleOut("Failed to load config, error=%d", rc);
+            }
+        }
+        else {
+            // use default settings, already loaded
+
+            modConfig.configPath = "";
+            modConfig.configLastEditTimestamp = 0;
+
+            ConsoleOut("No config file found at '%s', using defaults, ShowConsole=%d", modConfig.configPath.c_str(), modConfig.ShowConsole);
+        }
+        ConsoleOut("");
+    }
 
     //
 
@@ -178,8 +242,8 @@ void MainThreadFunction(HMODULE hModule)
             ConsoleOut("Enabling hook...");
             EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
 
-            ConsoleOut("Target address: %16lx", modData.TargetProcessAbsoluteAddr);
-            ConsoleOut("Original fn:    %16lx", modData.originalFunction);
+            ConsoleOut("Target address: %16llx", modData.TargetProcessAbsoluteAddr);
+            ConsoleOut("Original fn:    %16llx", modData.originalFunction);
 
             ConsoleOut("Function successfully hooked. Do not close this window.");
             ConsoleOut("");
@@ -199,53 +263,55 @@ extern "C" void __declspec(dllexport) dllStartPlugin(void)
 }
 
 BOOL APIENTRY DllMain( HMODULE hModule,
-                       DWORD  ul_reason_for_call,
-                       LPVOID lpReserved
+	                   DWORD  ul_reason_for_call,
+	                   LPVOID lpReserved
                      )
 {
-    switch (ul_reason_for_call)
-    {
-    case DLL_PROCESS_ATTACH:
-    {
-        lock_guard<mutex> lock(modDataMutex);
+	switch (ul_reason_for_call)
+	{
+	case DLL_PROCESS_ATTACH:
+	{
+		lock_guard<mutex> lock(modDataMutex);
 
-        CreateConsoleWindow();
+		CreateConsoleWindow();
 
-        ConsoleOut("DLL_PROCESS_ATTACH");
+		ConsoleOut("DLL_PROCESS_ATTACH");
 
-        if (modData.rngNeedsInit) {
-            pcg_extras::seed_seq_from<random_device> seed_source;
-            modData.rng.seed(seed_source);
-            modData.rngNeedsInit = FALSE;
-            ConsoleOut("-- thread id %d inited rng --", this_thread::get_id());
-        }
+		if (modNeedsInit) {
+			pcg_extras::seed_seq_from<random_device> seed_source;
+			modData.rng.seed(seed_source);
 
-        ConsoleOut("");
-    }
-        break;
-    case DLL_THREAD_ATTACH:
-    {
-        // ConsoleOut("DLL_THREAD_ATTACH");
-    }
-        break;
-    case DLL_THREAD_DETACH:
-    {
-        // ConsoleOut("DLL_THREAD_DETACH");
-    }
-        break;
-    case DLL_PROCESS_DETACH:
-    {
-        lock_guard<mutex> lock(modDataMutex);
+			ConsoleOut("-- thread id %d inited rng --", this_thread::get_id());
 
-        ConsoleOut("DLL_PROCESS_DETACH");
+            modNeedsInit = FALSE;
+		}
 
-        // not clear if this is doing anything, or if it even needs to...
-        DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
+		ConsoleOut("");
+	}
+	break;
+	case DLL_THREAD_ATTACH:
+	{
+		// ConsoleOut("DLL_THREAD_ATTACH");
+	}
+	break;
+	case DLL_THREAD_DETACH:
+	{
+		// ConsoleOut("DLL_THREAD_DETACH");
+	}
+	break;
+	case DLL_PROCESS_DETACH:
+	{
+		lock_guard<mutex> lock(modDataMutex);
 
-        ConsoleOut("detached and unhooked...");
-        ConsoleOut("");
-    }
-        break;
-    }
-    return TRUE;
+		ConsoleOut("DLL_PROCESS_DETACH");
+
+		// not clear if this is doing anything, or if it even needs to...
+		DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
+
+		ConsoleOut("detached and unhooked...");
+		ConsoleOut("");
+	}
+	break;
+	}
+	return TRUE;
 }

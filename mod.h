@@ -5,6 +5,7 @@
 #include "hook.h"
 #include "pcg_random.hpp"
 
+#include <SimpleIni.h>
 #include <filesystem>
 #include <mutex>
 #include <random>
