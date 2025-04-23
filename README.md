@@ -15,6 +15,11 @@ Install with [vcpkg](https://learn.microsoft.com/en-us/vcpkg/get_started/get-sta
 
 `.\vcpkg install minhook:x64-windows-static`
 
+### [SimpleIni](https://github.com/brofield/simpleini)
+Also install with vcpkg as a static library. Visual Studio doesn't seem to have any issues finding it.
+
+`.\vcpkg install simpleini:x64-windows-static`
+
 ### [pcg-cpp](https://www.pcg-random.org/)
 This is a header-only C++ pseudorandom number generator library by Melissa O'Neill. To use the library, clone it from github parallel to this repository.
 
