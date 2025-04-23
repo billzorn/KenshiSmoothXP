@@ -21,8 +21,6 @@ Also install with vcpkg as a static library. Visual Studio doesn't seem to have 
 `.\vcpkg install simpleini:x64-windows-static`
 
 ### [pcg-cpp](https://www.pcg-random.org/)
-This is a header-only C++ pseudorandom number generator library by Melissa O'Neill. To use the library, clone it from github parallel to this repository.
+This is a header-only C++ pseudorandom number generator library by Melissa O'Neill. Also install with vcpkg.
 
-`git clone https://github.com/imneme/pcg-cpp.git`
-
-The solution is configured to look for additional headers in `..\pcg-cpp\include`.
+`.\vcpkg install pcg:x64-windows-static`
