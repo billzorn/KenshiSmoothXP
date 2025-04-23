@@ -3,8 +3,8 @@
 #include "framework.h"
 #include "utils.h"
 #include "hook.h"
-#include "pcg_random.hpp"
 
+#include <pcg_random.hpp>
 #include <SimpleIni.h>
 #include <filesystem>
 #include <mutex>
