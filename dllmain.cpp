@@ -88,6 +88,37 @@ void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float fact
     float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
     val = normalizedDifference * normalizedDifference;
 
+    double lvl = *valuePointer;
+    double d = factor2;
+
+    ConsoleOut("LVLMULT lvl=%.16f, d=%.16f", lvl, d);
+
+    double lm_orig = val;
+    double lm_vanilla = lvlmult_vanilla(lvl, d);
+    ConsoleOut("  orig     =%.16f", lm_orig);
+    ConsoleOut("  vanilla  =%.16f", lm_vanilla);
+
+    double a = 0.95;
+    double t = a * d;
+    if (lvl >= t) {
+        double lm_mod = lvlmult_mod(lvl, d, t);
+        double lm_ratio = lvlmult_ratio(lvl, d, a);
+        ConsoleOut("  mod      =%.16f", lm_mod);
+        ConsoleOut("  ratio    =%.16f", lm_ratio);
+
+        double _1_m_a = 1.0 - a;
+        double _1_m_a_cubed = _1_m_a * _1_m_a * _1_m_a;
+        double lm_pre = lvlmult_ratio_precomp(lvl, d, a, _1_m_a_cubed);
+        ConsoleOut("  precomp  =%.16f", lm_pre);
+    }
+
+    if (lvl >= d - 1.0) {
+        double lm_dm1_ref = lvlmult_mod(lvl, d, d - 1.0);
+        double lm_dm1 = lvlmult_dm1(lvl, d);
+        ConsoleOut("  dm1 ref  =%.16f", lm_dm1_ref);
+        ConsoleOut("  dm1      =%.16f", lm_dm1);
+    }
+
     // NaN Check
     if (val == val && val > 0.0f && factor1 > 0.0f && factor1 <= 20.0f && val <= 20.0f)
     {
