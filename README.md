@@ -8,6 +8,8 @@ Install/clone the requirements, open the solution with [Visual Studio](https://v
 
 Probably set the target to Release / x64.
 
+By default the project is using the AVX2 instruction set, so that it has access to real FMA instructions; if somehow you are still using Sandy Bridge after the year 2025, then you may have to change this to something that is compatible with your system.
+
 ## Requirements
 
 ### [MinHook](https://www.codeproject.com/KB/winsdk/LibMinHook.aspx)
