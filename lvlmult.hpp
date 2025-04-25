@@ -2,6 +2,39 @@
 
 #include <cmath>
 
+// the level multiplier in Kenshi:
+// https://www.reddit.com/r/Kenshi/comments/1hisvzq/kenshi_fact_of_the_day_11/
+//
+// this code computes the value of the level multiplier
+// in a numerically optimized way; some optimization help
+// was provided by the Herbie tool:
+// https://herbie.uwplse.org/
+//
+// In addition to the vanilla level multiplier:
+//   ((d - x) / d)^2, d is 101
+// options are provided to compute a different function:
+//   (b * k) / (k + x), b and k computed from d
+// This is intended to be used at high levels (>= d),
+// retaining the original level curve for levels x<d,
+// but smoothly transitioning (at level k) into a new
+// function that never converges completely to zero.
+// In this way experience gain can continue (very slowly)
+// at high levels, and the other side of the quadratic
+// vanilla lvlmult curve does not cause increasing xp gain.
+//
+// The functions offer several different ways of computing
+// values of b and k so that the values and derivatives
+// of the lvlmult curves match at the desired transition point,
+// referred to as t.
+// If t is known directly (for example, if you want to use
+// vanilla lvlmult up to level t=95, and use the mod curve
+// over level 95), it can be passed to lvlmult_mod().
+// t can also be derived relative to d; lvlmult_dm1()
+// assumes t=d-1, and lvlmult_ratio() takes a ratio argument a
+// and computes t=d*a. lvlmult_ratio_precomp() is the same
+// as lvlmult_ratio() but it takes an additional argument
+// with a precomputed value for (1-a)^3.
+
 template <typename fp_t>
 fp_t lvlmult_vanilla(fp_t x, fp_t d) {
     // original function: (*valuePointer is x, factor2 is d)
