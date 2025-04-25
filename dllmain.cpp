@@ -1,5 +1,11 @@
 #include "mod.h"
 
+enum class LvlmultMethod {
+    Vanilla = 0,
+    Smooth = 1,
+    Custom = 2
+};
+
 class ModConfig
 {
 public:
@@ -7,16 +13,10 @@ public:
     string configPath;
     time_t configLastEditTimestamp = 0;
 
-    bool ShowConsole = FALSE;
-
-    ModConfig()
-    {
-    }
-
-    ModConfig(bool showConsole)
-    {
-        ShowConsole = showConsole;
-    }
+    LvlmultMethod lvlmultMethod = LvlmultMethod::Vanilla;
+    double transitionPoint = 0.95;
+    bool showConsole = TRUE;
+    int32_t showStats = 0;
 } modConfig;
 
 typedef void (*OriginalFunctionType)(float*, float, float);
@@ -241,12 +241,79 @@ void MainThreadFunction(HMODULE hModule)
             SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
             if (rc == SI_OK)
             {
-                modConfig.ShowConsole = !!ini.GetLongValue("Parameters", "Debug Console", modConfig.ShowConsole);
+                modConfig.showConsole = !!ini.GetLongValue("Parameters", "ShowConsole", modConfig.showConsole);
 
-                ConsoleOut("Loaded config, ShowConsole=%d", modConfig.ShowConsole);
+                if (modConfig.showConsole) {
+                    ConsoleOut("**** we would have created the console window here ****");
+                    ConsoleOut("");
+                }
+
+                auto lvlmultMethodData = ini.GetLongValue("Parameters", "LvlmultMethod", (long)modConfig.lvlmultMethod);
+                switch (lvlmultMethodData) {
+                case (long)LvlmultMethod::Vanilla:
+                    modConfig.lvlmultMethod = LvlmultMethod::Vanilla;
+                    break;
+                case (long)LvlmultMethod::Smooth:
+                    modConfig.lvlmultMethod = LvlmultMethod::Smooth;
+                    break;
+                case (long)LvlmultMethod::Custom:
+                    modConfig.lvlmultMethod = LvlmultMethod::Custom;
+                    break;
+                default:
+                    if (modConfig.showConsole) {
+                        ConsoleOut("Unknown LvlmultMethod %d, setting to 0 (vanilla)", lvlmultMethodData);
+                        ConsoleOut("");
+                    }
+                    modConfig.lvlmultMethod = LvlmultMethod::Vanilla;
+                    break;
+                }
+
+                auto transitionPointData = ini.GetDoubleValue("Parameters", "TransitionPoint", modConfig.transitionPoint);
+                if (transitionPointData < 0.0) {
+                    if (modConfig.showConsole) {
+                        ConsoleOut("TransitionPoint %f must be at least 0, setting to 0.0", transitionPointData);
+                        ConsoleOut("");
+                    }
+                    modConfig.transitionPoint = 0.0;
+                }
+                else if (transitionPointData <= 1.0) {
+                    modConfig.transitionPoint = transitionPointData;
+                }
+                else {
+                    if (modConfig.showConsole) {
+                        ConsoleOut("TransitionPoint %f must be at most 1, setting to 1.0", transitionPointData);
+                        ConsoleOut("");
+                    }
+                    modConfig.transitionPoint = 1.0;
+                }
+
+                modConfig.showStats = ini.GetLongValue("Parameters", "ShowStats", modConfig.showStats);
+
+                if (modConfig.showConsole) {
+                    ConsoleOut("Loaded configuration from %s", modConfig.configPath.c_str());
+                    ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
+                    ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
+                    ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
+                    ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+                    ConsoleOut("");
+                }
             }
             else {
-                ConsoleOut("Failed to load config, error=%d", rc);
+                if (modConfig.showConsole) {
+                    ConsoleOut("**** we would have created the console window here ****");
+                    ConsoleOut("");
+                }
+
+                if (modConfig.showConsole) {
+                    ConsoleOut("Failed to load config from %s, error=%d", modConfig.configPath.c_str(), rc);
+                    ConsoleOut("");
+                    ConsoleOut("Default configuration:");
+                    ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
+                    ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
+                    ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
+                    ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+                    ConsoleOut("");
+                }
             }
         }
         else {
@@ -255,9 +322,18 @@ void MainThreadFunction(HMODULE hModule)
             modConfig.configPath = "";
             modConfig.configLastEditTimestamp = 0;
 
-            ConsoleOut("No config file found at '%s', using defaults, ShowConsole=%d", modConfig.configPath.c_str(), modConfig.ShowConsole);
+            if (modConfig.showConsole) {
+                ConsoleOut("**** we would have created the console window here ****");
+                ConsoleOut("");
+            }
+
+            ConsoleOut("No config file found at '%s', using default configuration:", modConfig.configPath.c_str());
+            ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
+            ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
+            ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
+            ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+            ConsoleOut("");
         }
-        ConsoleOut("");
     }
 
     //
