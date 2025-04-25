@@ -1,6 +1,6 @@
 #pragma once
 
-#include <tgmath.h>
+#include <cmath>
 
 template <typename fp_t>
 fp_t lvlmult_vanilla(fp_t x, fp_t d) {
