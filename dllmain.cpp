@@ -80,6 +80,135 @@ const char LEVELING_FUNCTION_MASK[] =
 
 //
 
+static inline float float_srnd29(double x, uint32_t r)
+{
+    // stochastic rounding; the double has 29 more bits of significand
+    // compared to the float (53 - 24 = 29), so if r is uniform IID
+    // random bits, our probability of rounding up if we add 29 of them
+    // to the low bits of x is (low bits of x) / 2^29, or exactly what
+    // we would expect if our output were a random variable that was
+    // always a representble float, but with expected value exactly
+    // equal to x.
+
+    // This analysis doesn't work if x is small (subnormal for float)
+    // in that case, we should have moved the bits higher up,
+    // or if x is not finite, but we shouldn't be trying to round
+    // any values that look like those (or in any case we shouldn't
+    // care about the result
+
+    uint64_t u = *(uint64_t*)&x;
+    u = (u + (uint64_t)(r >> 3)) & 0xffffffffe0000000ull;
+    return (float)(*(double*)&u);
+}
+
+void HK_AdjustLevel_Vanilla_Clean(float* lvlPointer, float xpGained, float dFactor)
+{
+    if (xpGained <= 0.0) {
+        // vanilla clamp, might as well return now
+        return;
+    }
+
+    double lvl = *lvlPointer;
+    double xp = xpGained;
+    double d = dFactor;
+
+    if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
+        // the computation will fail anyway, so abort now.
+        // also avoids checks later
+        return;
+    }
+
+    double lvlmult = lvlmult_vanilla(lvl, d);
+
+    if (lvlmult <= 0.0 || lvlmult > 20.0) {
+        // vanilla's weird clamping on lvlmult
+        return;
+    }
+
+    else if (xp > 20.0) {
+        // not quite faithful vanilla clamp: cap raw xp gain at 20,
+        // but don't set it to 0
+        xp = 20.0;
+    }
+
+    double y = fma(lvlmult, xp, lvl);
+    uint32_t r;
+    {
+        lock_guard<mutex> lock(modDataMutex);
+        r = modData.rng();
+    }
+    *lvlPointer = float_srnd29(y, r);
+}
+
+void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
+{
+    if (modConfig.showConsole) {
+        ConsoleOut("ADJUST   lvl=%.8f, raw_xp=%.8f,       d=%.8f", *lvlPointer, xpGained, dFactor);
+    }
+
+    if (xpGained <= 0.0) {
+        // vanilla clamp, might as well return now
+        if (modConfig.showConsole) {
+            ConsoleOut("  ZERO");
+            ConsoleOut("");
+        }
+        return;
+    }
+
+    double lvl = *lvlPointer;
+    double xp = xpGained;
+    double d = dFactor;
+
+    if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
+        // the computation will fail anyway, so abort now.
+        // also avoids checks later
+        if (modConfig.showConsole) {
+            ConsoleOut("  NOT FINITE ???");
+            ConsoleOut("");
+        }
+        return;
+    }
+
+    double lvlmult = lvlmult_vanilla(lvl, d);
+
+    if (lvlmult <= 0.0 || lvlmult > 20.0) {
+        // vanilla's weird clamping on lvlmult
+        if (modConfig.showConsole) {
+            ConsoleOut("  CLAMP  lvlmult=%.8f", lvlmult);
+            ConsoleOut("");
+        }
+        return;
+    }
+
+    else if (xp > 20.0) {
+        // not quite faithful vanilla clamp: cap raw xp gain at 20,
+        // but don't set it to 0
+        xp = 20.0;
+    }
+
+    double y = fma(lvlmult, xp, lvl);
+    uint32_t r;
+    {
+        lock_guard<mutex> lock(modDataMutex);
+        r = modData.rng();
+    }
+    float oldLvl = *lvlPointer;
+    *lvlPointer = float_srnd29(y, r);
+
+    if (modConfig.showConsole) {
+        bool rounded_up = y < *lvlPointer;
+        if (*lvlPointer > oldLvl) {
+            ConsoleOut("  UPDATE lvl=%.8f,     xp=%.8f, lvlmult=%.8f, srnd=%08x %s",
+                *lvlPointer, xp * lvlmult, lvlmult, r>>3, rounded_up ? "UP" : "DOWN");
+        }
+        else {
+            ConsoleOut("  NOP    lvl=%.8f,     xp=%.8f, lvlmult=%.8f, srnd=%08x %s",
+                *lvlPointer, xp * lvlmult, lvlmult, r>>3, rounded_up ? "UP" : "DOWN");
+        }
+        ConsoleOut("");
+    }
+}
+
 void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float factor2)
 {
     float oldPointerValue = *valuePointer;
@@ -161,7 +290,32 @@ bool SetupLevelingHook(LPVOID absoluteAddr)
         return false;
     }
 
-    if (MH_CreateHook(absoluteAddr, &HK_AdjustValueBasedOnFactors, (LPVOID*)&modData.originalFunction) != MH_OK)
+    OriginalFunctionType modFunction;
+    switch (modConfig.lvlmultMethod)
+    {
+    case LvlmultMethod::Vanilla:
+        if (modConfig.showConsole) {
+            modFunction = &HK_AdjustLevel_Vanilla;
+        }
+        else {
+            modFunction = &HK_AdjustLevel_Vanilla_Clean;
+        }
+        break;
+    case LvlmultMethod::Smooth:
+    case LvlmultMethod::Custom:
+    default:
+        // should be unreachable
+        //if (modConfig.showConsole) {
+        //    modFunction = &HK_AdjustLevel_Vanilla;
+        //}
+        //else {
+        //    modFunction = &HK_AdjustLevel_Vanilla_Clean;
+        //}
+        modFunction = &HK_AdjustValueBasedOnFactors;
+        break;
+    }
+
+    if (MH_CreateHook(absoluteAddr, modFunction, (LPVOID*)&modData.originalFunction) != MH_OK)
     {
         cerr << "Failed to create the hook." << endl;
         return false;
