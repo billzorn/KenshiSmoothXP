@@ -6,6 +6,8 @@ enum class LvlmultMethod {
     Custom = 2
 };
 
+typedef void (*OriginalFunctionType)(float*, float, float);
+
 class ModConfig
 {
 public:
@@ -21,8 +23,6 @@ public:
     bool modInitialized = FALSE;
 } modConfig;
 
-typedef void (*OriginalFunctionType)(float*, float, float);
-
 class ModData
 {
 public:
@@ -35,6 +35,197 @@ public:
 
 bool modNeedsInit = TRUE;
 mutex modDataMutex;
+
+class ModStats
+{
+public:
+    uint64_t countsByGain[8] = { 0 };
+    uint64_t countsByLvl[13] = { 0 };
+
+    uint64_t srndUpLo = 0;
+    uint64_t srndDownLo = 0;
+    uint64_t srndUpHi = 0;
+    uint64_t srndDownHi = 0;
+} modStats;
+
+mutex modStatsMutex;
+
+void ClearStats()
+{
+    lock_guard<mutex> lock(modStatsMutex);
+
+    for (int i = 0; i < 8; i++) {
+        modStats.countsByGain[i] = 0;
+    }
+
+    for (int i = 0; i < 13; i++) {
+        modStats.countsByLvl[i] = 0;
+    }
+
+    modStats.srndUpLo = 0;
+    modStats.srndDownLo = 0;
+    modStats.srndUpHi = 0;
+    modStats.srndDownHi = 0;
+}
+
+void UpdateStats(float lvl, float xp, bool roundUp, bool lvlHi)
+{
+    lock_guard<mutex> lock(modStatsMutex);
+
+    if (xp < 0.00001f) {
+        modStats.countsByGain[0]++;
+    }
+    else if (xp < 0.0001f) {
+        modStats.countsByGain[1]++;
+    }
+    else if (xp < 0.001f) {
+        modStats.countsByGain[2]++;
+    }
+    else if (xp < 0.01f) {
+        modStats.countsByGain[3]++;
+    }
+    else if (xp < 0.1f) {
+        modStats.countsByGain[4]++;
+    }
+    else if (xp < 1.0f) {
+        modStats.countsByGain[5]++;
+    }
+    else if (xp < 10.0f) {
+        modStats.countsByGain[6]++;
+    }
+    else {
+        modStats.countsByGain[7]++;
+    }
+
+    if (lvl < 0.0f) {
+        modStats.countsByLvl[0]++;
+    }
+    else if (lvl < 100.0f) {
+        int lvl_idx = int(lvl / 10.0f) + 1;
+        lvl_idx = std::max(1, lvl_idx);
+        lvl_idx = std::min(lvl_idx, 10);
+        modStats.countsByLvl[lvl_idx]++;
+    }
+    else if (lvl < 110.0f) {
+        modStats.countsByLvl[11]++;
+    }
+    else {
+        modStats.countsByLvl[12]++;
+    }
+
+    if (lvlHi) {
+        if (roundUp) {
+            modStats.srndUpHi++;
+        }
+        else {
+            modStats.srndDownHi++;
+        }
+    }
+    else {
+        if (roundUp) {
+            modStats.srndUpLo++;
+        }
+        else {
+            modStats.srndDownLo++;
+        }
+    }
+}
+
+void ShowStats()
+{
+    lock_guard<mutex> lock(modStatsMutex);
+
+    constexpr uint64_t histw = 50;
+
+    static const char* gain_labels[8] = {
+        "[ < 0.00001]",
+        "[ < 0.0001 ]",
+        "[ < 0.001  ]",
+        "[ < 0.01   ]",
+        "[ < 0.1    ]",
+        "[ < 1.0    ]",
+        "[ < 10.0   ]",
+        "[<= 20.0   ]",
+    };
+
+    static const char* lvl_labels[13] = {
+        "[    < 0   ]",
+        "[  0 - 10  ]",
+        "[ 10 - 20  ]",
+        "[ 20 - 30  ]",
+        "[ 30 - 40  ]",
+        "[ 40 - 50  ]",
+        "[ 50 - 60  ]",
+        "[ 60 - 70  ]",
+        "[ 70 - 80  ]",
+        "[ 80 - 90  ]",
+        "[ 90 - 100 ]",
+        "[100 - 110 ]",
+        "[110+      ]",
+    };
+
+    uint64_t gain_max = 0;
+    for (int i = 0; i < 8; i++) {
+        if (modStats.countsByGain[i] > gain_max) {
+            gain_max = modStats.countsByGain[i];
+        }
+    }
+
+    uint64_t lvl_max = 0;
+    for (int i = 0; i < 13; i++) {
+        if (modStats.countsByLvl[i] > lvl_max) {
+            lvl_max = modStats.countsByLvl[i];
+        }
+    }
+
+    // std::cout << "-- Experience gain summary --" << std::endl << std::endl;
+
+    std::cout << "Exp gain by raw quantity:" << std::endl;
+    for (int i = 0; i < 8; i++) {
+        printf("%s %8lld ", gain_labels[i], modStats.countsByGain[i]);
+        for (uint64_t j = 0; j < (modStats.countsByGain[i] * histw) / gain_max; j++) {
+            std::cout << "*";
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+
+    std::cout << "Exp gain by level of gaining character:" << std::endl;
+    for (int i = 0; i < 13; i++) {
+        printf("%s %8lld ", lvl_labels[i], modStats.countsByLvl[i]);
+        for (uint64_t j = 0; j < (modStats.countsByLvl[i] * histw) / lvl_max; j++) {
+            std::cout << "*";
+        }
+        std::cout << std::endl;
+    }
+    std::cout << std::endl;
+
+    double cutoff_lvl;
+    switch (modConfig.lvlmultMethod) {
+    case LvlmultMethod::Vanilla:
+    case LvlmultMethod::Smooth:
+        cutoff_lvl = 100.0;
+        break;
+    case LvlmultMethod::Custom:
+        cutoff_lvl = 101.0 * modConfig.transitionPoint;
+        break;
+    default:
+        cutoff_lvl = 100.0;
+        break;
+    }
+
+    printf("Stochastic roundings (below level %.2f)", cutoff_lvl);
+    std::cout << std::endl;
+    std::cout << "  UP: " << modStats.srndUpLo << ", DOWN: " << modStats.srndDownLo;
+    printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpLo / (double)(modStats.srndUpLo + modStats.srndDownLo)));
+    std::cout << std::endl;
+
+    printf("Stochastic roundings (above level %.2f)", cutoff_lvl);
+    std::cout << std::endl;
+    std::cout << "  UP: " << modStats.srndUpHi << ", DOWN: " << modStats.srndDownHi;
+    printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpHi / (double)(modStats.srndUpHi + modStats.srndDownHi)));
+    std::cout << std::endl << std::endl;
+}
 
 vector<BYTE> LEVELING_FUNCTION_PATTERN = {
 
@@ -195,8 +386,10 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
     float oldLvl = *lvlPointer;
     *lvlPointer = float_srnd29(y, r);
 
+    UpdateStats(oldLvl, xpGained, y < (double)*lvlPointer, oldLvl >= 100.0f);
+
     if (modConfig.showConsole) {
-        bool rounded_up = y < *lvlPointer;
+        bool rounded_up = y < (double)*lvlPointer;
         if (*lvlPointer > oldLvl) {
             ConsoleOut("  UPDATE lvl=%.8f,     xp=%.8f, lvlmult=%.8f, srnd=%08x %s",
                 *lvlPointer, xp * lvlmult, lvlmult, r>>3, rounded_up ? "UP" : "DOWN");
@@ -206,6 +399,10 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
                 *lvlPointer, xp * lvlmult, lvlmult, r>>3, rounded_up ? "UP" : "DOWN");
         }
         ConsoleOut("");
+    }
+
+    if (r < 0x0fffffff) {
+        ShowStats();
     }
 }
 
