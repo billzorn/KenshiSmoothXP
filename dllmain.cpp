@@ -17,6 +17,7 @@ public:
 
     LvlmultMethod lvlmultMethod = LvlmultMethod::Vanilla;
     double transitionPoint = 0.95;
+    double oneMinusACubed = (1.0 - 0.95) * (1.0 - 0.95) * (1.0 - 0.95);
     bool showConsole = TRUE;
     int32_t showStats = 0;
 
@@ -579,73 +580,166 @@ void HK_AdjustLevel_Smooth(float* lvlPointer, float xpGained, float dFactor)
     }
 }
 
-void HK_AdjustValueBasedOnFactors(float* valuePointer, float factor1, float factor2)
+void HK_AdjustLevel_Custom_Clean(float* lvlPointer, float xpGained, float dFactor)
 {
-    float oldPointerValue = *valuePointer;
-
-    float val;
-    const float invFactor2 = 1.0f / factor2;
-
-    float normalizedDifference = (factor2 - *valuePointer) * invFactor2;
-    val = normalizedDifference * normalizedDifference;
-
-    double lvl = *valuePointer;
-    double d = factor2;
-
-    ConsoleOut("LVLMULT lvl=%.16f, d=%.16f", lvl, d);
-
-    double lm_orig = val;
-    double lm_vanilla = lvlmult_vanilla(lvl, d);
-    ConsoleOut("  orig     =%.16f", lm_orig);
-    ConsoleOut("  vanilla  =%.16f", lm_vanilla);
-
-    double a = 0.95;
-    double t = a * d;
-    if (lvl >= t) {
-        double lm_mod = lvlmult_mod(lvl, d, t);
-        double lm_ratio = lvlmult_ratio(lvl, d, a);
-        ConsoleOut("  mod      =%.16f", lm_mod);
-        ConsoleOut("  ratio    =%.16f", lm_ratio);
-
-        double _1_m_a = 1.0 - a;
-        double _1_m_a_cubed = _1_m_a * _1_m_a * _1_m_a;
-        double lm_pre = lvlmult_ratio_precomp(lvl, d, a, _1_m_a_cubed);
-        ConsoleOut("  precomp  =%.16f", lm_pre);
+    if (xpGained <= 0.0) {
+        // vanilla clamp, might as well return now
+        return;
     }
 
-    if (lvl >= d - 1.0) {
-        double lm_dm1_ref = lvlmult_mod(lvl, d, d - 1.0);
-        double lm_dm1 = lvlmult_dm1(lvl, d);
-        ConsoleOut("  dm1 ref  =%.16f", lm_dm1_ref);
-        ConsoleOut("  dm1      =%.16f", lm_dm1);
+    double lvl = *lvlPointer;
+    double xp = xpGained;
+    double d = dFactor;
+
+    if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
+        // the computation will fail anyway, so abort now.
+        // also avoids checks later
+        return;
     }
 
-    // NaN Check
-    if (val == val && val > 0.0f && factor1 > 0.0f && factor1 <= 20.0f && val <= 20.0f)
+    double lvlmult = 1.0;
+    if (d >= 1.0) {
+        // We should always take this branch, but just leave lvlmult at 1.0
+        // if we see any really weird values of d.
+        // The only values of d that seem to be passed in are 11, 20, 21, and 101.
+        if (lvl <= d * modConfig.transitionPoint) {
+            lvlmult = lvlmult_vanilla(lvl, d);
+        }
+        else {
+            lvlmult = lvlmult_ratio_precomp(lvl, d, modConfig.transitionPoint,
+                                            modConfig.oneMinusACubed);
+        }
+
+        if (lvlmult <= 0) {
+            // should be impossible, but ok to check
+            return;
+        }
+        if (lvlmult >= 1.0) {
+            // very different clamping from vanilla game;
+            // lock lvlmult to 1 (for negative levels, xp gain is always like lvl 0)
+            lvlmult = 1.0;
+        }
+    }
+
+    if (xp > 20.0) {
+        // not quite faithful vanilla clamp: cap raw xp gain at 20,
+        // but don't set it to 0
+        xp = 20.0;
+    }
+
+    double y = fma(lvlmult, xp, lvl);
+    uint32_t r;
     {
-        *valuePointer += val * factor1;
+        lock_guard<mutex> lock(modDataMutex);
+        r = modData.rng();
+    }
+    *lvlPointer = float_srnd29(y, r);
+}
+
+void HK_AdjustLevel_Custom(float* lvlPointer, float xpGained, float dFactor)
+{
+    if (modConfig.showConsole && modConfig.showStats < -1) {
+        ConsoleOut("ADJUST   lvl=%.8f, xp=%.8f, d=%.8f", *lvlPointer, xpGained, dFactor);
     }
 
-    lock_guard<mutex> lock(modDataMutex);
-
-    ConsoleOut("ADJUST   vp=%.8f, f1=%.8f, f2=%.8f", oldPointerValue, factor1, factor2);
-    ConsoleOut("  INC     +=%.8f, lm=%.8f", val * factor1, val);
-    if (oldPointerValue != *valuePointer) {
-        ConsoleOut("  UPDATE vp=%.8f", *valuePointer);
-    }
-    else {
-        ConsoleOut("  NOP    vp=%.8f", *valuePointer);
+    if (xpGained <= 0.0) {
+        // vanilla clamp, might as well return now
+        if (modConfig.showConsole && modConfig.showStats < -1) {
+            ConsoleOut("  ZERO");
+            ConsoleOut("");
+        }
+        return;
     }
 
-    if (modNeedsInit) {
-        ConsoleOut("    MOD NOT INITED ???");
-    }
-    else {
-        uint32_t random_bias = modData.rng() >> 3;
-        ConsoleOut("    RBIAS %8x", random_bias);
+    double lvl = *lvlPointer;
+    double xp = xpGained;
+    double d = dFactor;
+
+    if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
+        // the computation will fail anyway, so abort now.
+        // also avoids checks later
+        if (modConfig.showConsole && modConfig.showStats < -1) {
+            ConsoleOut("  NOT FINITE ???");
+            ConsoleOut("");
+        }
+        return;
     }
 
-    ConsoleOut("");
+    double lvlmult = 1.0;
+    if (d >= 1.0) {
+        // We should always take this branch, but just leave lvlmult at 1.0
+        // if we see any really weird values of d.
+        // The only values of d that seem to be passed in are 11, 20, 21, and 101.
+        if (lvl <= d * modConfig.transitionPoint) {
+            lvlmult = lvlmult_vanilla(lvl, d);
+        }
+        else {
+            lvlmult = lvlmult_ratio_precomp(lvl, d, modConfig.transitionPoint,
+                                            modConfig.oneMinusACubed);
+        }
+
+        if (lvlmult <= 0) {
+            // should be impossible, but ok to check
+            if (modConfig.showConsole && modConfig.showStats < -1) {
+                ConsoleOut("  CLAMP lvlmult=%.8f", lvlmult);
+                ConsoleOut("");
+            }
+            return;
+        }
+        if (lvlmult >= 1.0) {
+            // very different clamping from vanilla game;
+            // lock lvlmult to 1 (for negative levels, xp gain is always like lvl 0)
+            lvlmult = 1.0;
+        }
+    }
+
+    if (xp > 20.0) {
+        // not quite faithful vanilla clamp: cap raw xp gain at 20,
+        // but don't set it to 0
+        xp = 20.0;
+    }
+
+    double y = fma(lvlmult, xp, lvl);
+    uint32_t r;
+    {
+        lock_guard<mutex> lock(modDataMutex);
+        r = modData.rng();
+    }
+    float oldLvl = *lvlPointer;
+    *lvlPointer = float_srnd29(y, r);
+
+    double xp_gained = xp * lvlmult;
+    bool rounded_up = y < (double)*lvlPointer;
+
+    constexpr double cutoff_xp = (1.0 / 262144.0);
+    UpdateStats(oldLvl, xpGained, rounded_up, xp_gained < cutoff_xp);
+
+    if (modConfig.showConsole) {
+        if (modConfig.showStats < -1) {
+            ConsoleOut("  INC      +=%.8f, lvlmult=%.8f", xp_gained, lvlmult);
+            if (oldLvl != *lvlPointer) {
+                ConsoleOut("  UPDATE lvl=%.8f", *lvlPointer);
+            }
+            else {
+
+                ConsoleOut("  NOP    lvl=%.8f", *lvlPointer);
+            }
+            ConsoleOut("");
+        }
+        else if (modConfig.showStats == -1) {
+            if (oldLvl != *lvlPointer) {
+                ConsoleOut("XP GAIN xp=%.8f, lvl=%.8f -> %.8f", xpGained, oldLvl, *lvlPointer);
+            }
+            else {
+
+                ConsoleOut("XP NOP  xp=%.8f, lvl=%.8f", xpGained, oldLvl);
+            }
+        }
+    }
+
+    if (r < 0x0fffffff) {
+        ShowStats();
+    }
 }
 
 // take the lock on modData before calling these;
@@ -680,16 +774,18 @@ bool SetupLevelingHook(LPVOID absoluteAddr)
         }
         break;
     case LvlmultMethod::Custom:
+        if (modConfig.showConsole) {
+            modFunction = &HK_AdjustLevel_Custom;
+        }
+        else {
+            modFunction = &HK_AdjustLevel_Custom_Clean;
+        }
+        break;
     default:
         // should be unreachable
-        //if (modConfig.showConsole) {
-        //    modFunction = &HK_AdjustLevel_Vanilla;
-        //}
-        //else {
-        //    modFunction = &HK_AdjustLevel_Vanilla_Clean;
-        //}
-        modFunction = &HK_AdjustValueBasedOnFactors;
-        break;
+        modFunction = &HK_AdjustLevel_Vanilla;
+        cerr << "Invalid lvlmult Method: " << (uint64_t)modConfig.lvlmultMethod << endl;
+        return false;
     }
 
     if (MH_CreateHook(absoluteAddr, modFunction, (LPVOID*)&modData.originalFunction) != MH_OK)
@@ -814,9 +910,12 @@ void MainThreadFunction(HMODULE hModule)
                     ConsoleOut("");
                 }
                 modConfig.transitionPoint = 0.0;
+                modConfig.oneMinusACubed = 1.0;
             }
             else if (transitionPointData <= 1.0) {
                 modConfig.transitionPoint = transitionPointData;
+                const double oneMinusA = (1.0 - transitionPointData);
+                modConfig.oneMinusACubed = oneMinusA * oneMinusA * oneMinusA;
             }
             else {
                 if (modConfig.showConsole) {
@@ -824,6 +923,7 @@ void MainThreadFunction(HMODULE hModule)
                     ConsoleOut("");
                 }
                 modConfig.transitionPoint = 1.0;
+                modConfig.oneMinusACubed = 0.0;
             }
 
             modConfig.showStats = ini.GetLongValue("Parameters", "ShowStats", modConfig.showStats);
