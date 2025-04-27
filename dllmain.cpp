@@ -178,49 +178,48 @@ void ShowStats()
         }
     }
 
-    // std::cout << "-- Experience gain summary --" << std::endl << std::endl;
+    auto currentZone = chrono::current_zone();
+
+    auto now = chrono::system_clock::now();
+    chrono::zoned_time localTime(currentZone, now);
+
+    uint64_t totalMilliseconds = chrono::duration_cast<chrono::milliseconds>(localTime.get_local_time().time_since_epoch()).count();
+
+    uint64_t hour = (totalMilliseconds / 3600000) % 24;
+    uint64_t minute = (totalMilliseconds / 60000) % 60;
+    uint64_t second = (totalMilliseconds / 1000) % 60;
+    uint64_t millisecond = totalMilliseconds % 1000;
+
+    printf("-- [%02lld:%02lld:%02lld.%03lld] global level gain summary --", hour, minute, second, millisecond);
+    std::cout << std::endl;
 
     std::cout << "Exp gain by raw quantity:" << std::endl;
     for (int i = 0; i < 8; i++) {
-        printf("%s %8lld ", gain_labels[i], modStats.countsByGain[i]);
+        printf("  %s %8lld ", gain_labels[i], modStats.countsByGain[i]);
         for (uint64_t j = 0; j < (modStats.countsByGain[i] * histw) / gain_max; j++) {
             std::cout << "*";
         }
         std::cout << std::endl;
     }
-    std::cout << std::endl;
 
     std::cout << "Exp gain by level of gaining character:" << std::endl;
     for (int i = 0; i < 13; i++) {
-        printf("%s %8lld ", lvl_labels[i], modStats.countsByLvl[i]);
+        printf("  %s %8lld ", lvl_labels[i], modStats.countsByLvl[i]);
         for (uint64_t j = 0; j < (modStats.countsByLvl[i] * histw) / lvl_max; j++) {
             std::cout << "*";
         }
         std::cout << std::endl;
     }
-    std::cout << std::endl;
 
-    double cutoff_lvl;
-    switch (modConfig.lvlmultMethod) {
-    case LvlmultMethod::Vanilla:
-    case LvlmultMethod::Smooth:
-        cutoff_lvl = 100.0;
-        break;
-    case LvlmultMethod::Custom:
-        cutoff_lvl = 101.0 * modConfig.transitionPoint;
-        break;
-    default:
-        cutoff_lvl = 100.0;
-        break;
-    }
+    constexpr double cutoff_xp = (1.0 / 262144.0);
 
-    printf("Stochastic roundings (below level %.2f)", cutoff_lvl);
+    std::cout << "Stochastic roundings (xp increment above 1/262144)";
     std::cout << std::endl;
     std::cout << "  UP: " << modStats.srndUpLo << ", DOWN: " << modStats.srndDownLo;
     printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpLo / (double)(modStats.srndUpLo + modStats.srndDownLo)));
     std::cout << std::endl;
 
-    printf("Stochastic roundings (above level %.2f)", cutoff_lvl);
+    std::cout << "Stochastic roundings (xp increment below 1/262144, vanilla xp gain impossible)";
     std::cout << std::endl;
     std::cout << "  UP: " << modStats.srndUpHi << ", DOWN: " << modStats.srndDownHi;
     printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpHi / (double)(modStats.srndUpHi + modStats.srndDownHi)));
@@ -285,7 +284,7 @@ static inline float float_srnd29(double x, uint32_t r)
     // in that case, we should have moved the bits higher up,
     // or if x is not finite, but we shouldn't be trying to round
     // any values that look like those (or in any case we shouldn't
-    // care about the result
+    // care about the result)
 
     uint64_t u = *(uint64_t*)&x;
     u = (u + (uint64_t)(r >> 3)) & 0xffffffffe0000000ull;
@@ -333,13 +332,13 @@ void HK_AdjustLevel_Vanilla_Clean(float* lvlPointer, float xpGained, float dFact
 
 void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
 {
-    if (modConfig.showConsole) {
-        ConsoleOut("ADJUST   lvl=%.8f, raw_xp=%.8f,       d=%.8f", *lvlPointer, xpGained, dFactor);
+    if (modConfig.showConsole && modConfig.showStats < -1) {
+        ConsoleOut("ADJUST   lvl=%.8f, xp=%.8f, d=%.8f", *lvlPointer, xpGained, dFactor);
     }
 
     if (xpGained <= 0.0) {
         // vanilla clamp, might as well return now
-        if (modConfig.showConsole) {
+        if (modConfig.showConsole && modConfig.showStats < -1) {
             ConsoleOut("  ZERO");
             ConsoleOut("");
         }
@@ -353,7 +352,7 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
     if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
         // the computation will fail anyway, so abort now.
         // also avoids checks later
-        if (modConfig.showConsole) {
+        if (modConfig.showConsole && modConfig.showStats < -1) {
             ConsoleOut("  NOT FINITE ???");
             ConsoleOut("");
         }
@@ -364,8 +363,8 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
 
     if (lvlmult <= 0.0 || lvlmult > 20.0) {
         // vanilla's weird clamping on lvlmult
-        if (modConfig.showConsole) {
-            ConsoleOut("  CLAMP  lvlmult=%.8f", lvlmult);
+        if (modConfig.showConsole && modConfig.showStats < -1) {
+            ConsoleOut("  CLAMP lvlmult=%.8f", lvlmult);
             ConsoleOut("");
         }
         return;
@@ -386,19 +385,33 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
     float oldLvl = *lvlPointer;
     *lvlPointer = float_srnd29(y, r);
 
-    UpdateStats(oldLvl, xpGained, y < (double)*lvlPointer, oldLvl >= 100.0f);
+    double xp_gained = xp * lvlmult;
+    bool rounded_up = y < (double)*lvlPointer;
+
+    constexpr double cutoff_xp = (1.0 / 262144.0);
+    UpdateStats(oldLvl, xpGained, rounded_up, xp_gained < cutoff_xp);
 
     if (modConfig.showConsole) {
-        bool rounded_up = y < (double)*lvlPointer;
-        if (*lvlPointer > oldLvl) {
-            ConsoleOut("  UPDATE lvl=%.8f,     xp=%.8f, lvlmult=%.8f, srnd=%08x %s",
-                *lvlPointer, xp * lvlmult, lvlmult, r>>3, rounded_up ? "UP" : "DOWN");
+        if (modConfig.showStats < -1) {
+            ConsoleOut("  INC      +=%.8f, lvlmult=%.8f", xp_gained, lvlmult);
+            if (oldLvl != *lvlPointer) {
+                ConsoleOut("  UPDATE lvl=%.8f", *lvlPointer);
+            }
+            else {
+
+                ConsoleOut("  NOP    lvl=%.8f", *lvlPointer);
+            }
+            ConsoleOut("");
         }
-        else {
-            ConsoleOut("  NOP    lvl=%.8f,     xp=%.8f, lvlmult=%.8f, srnd=%08x %s",
-                *lvlPointer, xp * lvlmult, lvlmult, r>>3, rounded_up ? "UP" : "DOWN");
+        else if (modConfig.showStats == -1) {
+            if (oldLvl != *lvlPointer) {
+                ConsoleOut("XP GAIN xp=%.8f, lvl=%.8f -> %.8f", xpGained, oldLvl, *lvlPointer);
+            }
+            else {
+
+                ConsoleOut("XP NOP  xp=%.8f, lvl=%.8f", xpGained, oldLvl);
+            }
         }
-        ConsoleOut("");
     }
 
     if (r < 0x0fffffff) {
