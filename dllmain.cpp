@@ -315,7 +315,7 @@ void HK_AdjustLevel_Vanilla_Clean(float* lvlPointer, float xpGained, float dFact
         return;
     }
 
-    else if (xp > 20.0) {
+    if (xp > 20.0) {
         // not quite faithful vanilla clamp: cap raw xp gain at 20,
         // but don't set it to 0
         xp = 20.0;
@@ -370,7 +370,167 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
         return;
     }
 
-    else if (xp > 20.0) {
+    if (xp > 20.0) {
+        // not quite faithful vanilla clamp: cap raw xp gain at 20,
+        // but don't set it to 0
+        xp = 20.0;
+    }
+
+    double y = fma(lvlmult, xp, lvl);
+    uint32_t r;
+    {
+        lock_guard<mutex> lock(modDataMutex);
+        r = modData.rng();
+    }
+    float oldLvl = *lvlPointer;
+    *lvlPointer = float_srnd29(y, r);
+
+    double xp_gained = xp * lvlmult;
+    bool rounded_up = y < (double)*lvlPointer;
+
+    constexpr double cutoff_xp = (1.0 / 262144.0);
+    UpdateStats(oldLvl, xpGained, rounded_up, xp_gained < cutoff_xp);
+
+    if (modConfig.showConsole) {
+        if (modConfig.showStats < -1) {
+            ConsoleOut("  INC      +=%.8f, lvlmult=%.8f", xp_gained, lvlmult);
+            if (oldLvl != *lvlPointer) {
+                ConsoleOut("  UPDATE lvl=%.8f", *lvlPointer);
+            }
+            else {
+
+                ConsoleOut("  NOP    lvl=%.8f", *lvlPointer);
+            }
+            ConsoleOut("");
+        }
+        else if (modConfig.showStats == -1) {
+            if (oldLvl != *lvlPointer) {
+                ConsoleOut("XP GAIN xp=%.8f, lvl=%.8f -> %.8f", xpGained, oldLvl, *lvlPointer);
+            }
+            else {
+
+                ConsoleOut("XP NOP  xp=%.8f, lvl=%.8f", xpGained, oldLvl);
+            }
+        }
+    }
+
+    if (r < 0x0fffffff) {
+        ShowStats();
+    }
+}
+
+void HK_AdjustLevel_Smooth_Clean(float* lvlPointer, float xpGained, float dFactor)
+{
+    if (xpGained <= 0.0) {
+        // vanilla clamp, might as well return now
+        return;
+    }
+
+    double lvl = *lvlPointer;
+    double xp = xpGained;
+    double d = dFactor;
+
+    if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
+        // the computation will fail anyway, so abort now.
+        // also avoids checks later
+        return;
+    }
+
+    double lvlmult = 1.0;
+    if (d >= 2.0) {
+        // We should always take this branch, but just leave lvlmult at 1.0
+        // if we see any really weird values of d.
+        // The only values of d that seem to be passed in are 11, 20, 21, and 101.
+        if (lvl <= d - 1.0) {
+            lvlmult = lvlmult_vanilla(lvl, d);
+        }
+        else {
+            lvlmult = lvlmult_dm1(lvl, d);
+        }
+
+        if (lvlmult <= 0) {
+            // should be impossible, but ok to check
+            return;
+        }
+        if (lvlmult >= 1.0) {
+            // very different clamping from vanilla game;
+            // lock lvlmult to 1 (for negative levels, xp gain is always like lvl 0)
+            lvlmult = 1.0;
+        }
+    }
+
+    if (xp > 20.0) {
+        // not quite faithful vanilla clamp: cap raw xp gain at 20,
+        // but don't set it to 0
+        xp = 20.0;
+    }
+
+    double y = fma(lvlmult, xp, lvl);
+    uint32_t r;
+    {
+        lock_guard<mutex> lock(modDataMutex);
+        r = modData.rng();
+    }
+    *lvlPointer = float_srnd29(y, r);
+}
+
+void HK_AdjustLevel_Smooth(float* lvlPointer, float xpGained, float dFactor)
+{
+    if (modConfig.showConsole && modConfig.showStats < -1) {
+        ConsoleOut("ADJUST   lvl=%.8f, xp=%.8f, d=%.8f", *lvlPointer, xpGained, dFactor);
+    }
+
+    if (xpGained <= 0.0) {
+        // vanilla clamp, might as well return now
+        if (modConfig.showConsole && modConfig.showStats < -1) {
+            ConsoleOut("  ZERO");
+            ConsoleOut("");
+        }
+        return;
+    }
+
+    double lvl = *lvlPointer;
+    double xp = xpGained;
+    double d = dFactor;
+
+    if (!(isfinite(lvl) && isfinite(xp) && isfinite(d))) {
+        // the computation will fail anyway, so abort now.
+        // also avoids checks later
+        if (modConfig.showConsole && modConfig.showStats < -1) {
+            ConsoleOut("  NOT FINITE ???");
+            ConsoleOut("");
+        }
+        return;
+    }
+
+    double lvlmult = 1.0;
+    if (d >= 2.0) {
+        // We should always take this branch, but just leave lvlmult at 1.0
+        // if we see any really weird values of d.
+        // The only values of d that seem to be passed in are 11, 20, 21, and 101.
+        if (lvl <= d - 1.0) {
+            lvlmult = lvlmult_vanilla(lvl, d);
+        }
+        else {
+            lvlmult = lvlmult_dm1(lvl, d);
+        }
+
+        if (lvlmult <= 0) {
+            // should be impossible, but ok to check
+            if (modConfig.showConsole && modConfig.showStats < -1) {
+                ConsoleOut("  CLAMP lvlmult=%.8f", lvlmult);
+                ConsoleOut("");
+            }
+            return;
+        }
+        if (lvlmult >= 1.0) {
+            // very different clamping from vanilla game;
+            // lock lvlmult to 1 (for negative levels, xp gain is always like lvl 0)
+            lvlmult = 1.0;
+        }
+    }
+
+    if (xp > 20.0) {
         // not quite faithful vanilla clamp: cap raw xp gain at 20,
         // but don't set it to 0
         xp = 20.0;
@@ -512,6 +672,13 @@ bool SetupLevelingHook(LPVOID absoluteAddr)
         }
         break;
     case LvlmultMethod::Smooth:
+        if (modConfig.showConsole) {
+            modFunction = &HK_AdjustLevel_Smooth;
+        }
+        else {
+            modFunction = &HK_AdjustLevel_Smooth_Clean;
+        }
+        break;
     case LvlmultMethod::Custom:
     default:
         // should be unreachable
