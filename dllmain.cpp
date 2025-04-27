@@ -47,6 +47,9 @@ public:
     uint64_t srndDownLo = 0;
     uint64_t srndUpHi = 0;
     uint64_t srndDownHi = 0;
+
+    uint64_t eventCount = 0;
+    uint64_t lastDisplayed = 0;
 } modStats;
 
 mutex modStatsMutex;
@@ -67,6 +70,9 @@ void ClearStats()
     modStats.srndDownLo = 0;
     modStats.srndUpHi = 0;
     modStats.srndDownHi = 0;
+
+    modStats.eventCount = 0;
+    modStats.lastDisplayed = 0;
 }
 
 void UpdateStats(float lvl, float xp, bool roundUp, bool lvlHi)
@@ -130,11 +136,22 @@ void UpdateStats(float lvl, float xp, bool roundUp, bool lvlHi)
             modStats.srndDownLo++;
         }
     }
+
+    modStats.eventCount++;
 }
 
 void ShowStats()
 {
     lock_guard<mutex> lock(modStatsMutex);
+
+    if (modStats.eventCount == 0 or modStats.eventCount == modStats.lastDisplayed) {
+        // don't do anything if there's nothing to display,
+        // or if we haven't seen anything new since the last time we printed output
+        return;
+    }
+    else {
+        modStats.lastDisplayed = modStats.eventCount;
+    }
 
     constexpr uint64_t histw = 50;
 
@@ -179,6 +196,11 @@ void ShowStats()
         }
     }
 
+    if (gain_max == 0 || lvl_max == 0) {
+        // avoid divide by zero, just to be safe
+        return;
+    }
+
     auto currentZone = chrono::current_zone();
 
     auto now = chrono::system_clock::now();
@@ -214,16 +236,18 @@ void ShowStats()
 
     constexpr double cutoff_xp = (1.0 / 262144.0);
 
-    std::cout << "Stochastic roundings (xp increment above 1/262144)";
-    std::cout << std::endl;
+    std::cout << "Stochastic roundings (xp increment above 1/262144)" << std::endl;
     std::cout << "  UP: " << modStats.srndUpLo << ", DOWN: " << modStats.srndDownLo;
-    printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpLo / (double)(modStats.srndUpLo + modStats.srndDownLo)));
+    if (modStats.srndUpLo + modStats.srndDownLo > 0) {
+        printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpLo / (double)(modStats.srndUpLo + modStats.srndDownLo)));
+    }
     std::cout << std::endl;
 
-    std::cout << "Stochastic roundings (xp increment below 1/262144, vanilla xp gain impossible)";
-    std::cout << std::endl;
+    std::cout << "Stochastic roundings (xp increment below 1/262144, vanilla xp gain impossible)" << std::endl;
     std::cout << "  UP: " << modStats.srndUpHi << ", DOWN: " << modStats.srndDownHi;
-    printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpHi / (double)(modStats.srndUpHi + modStats.srndDownHi)));
+    if (modStats.srndUpHi + modStats.srndDownHi > 0) {
+        printf(" (%.3f%% up)", 100.0 * ((double)modStats.srndUpHi / (double)(modStats.srndUpHi + modStats.srndDownHi)));
+    }
     std::cout << std::endl << std::endl;
 }
 
@@ -414,10 +438,6 @@ void HK_AdjustLevel_Vanilla(float* lvlPointer, float xpGained, float dFactor)
             }
         }
     }
-
-    if (r < 0x0fffffff) {
-        ShowStats();
-    }
 }
 
 void HK_AdjustLevel_Smooth_Clean(float* lvlPointer, float xpGained, float dFactor)
@@ -573,10 +593,6 @@ void HK_AdjustLevel_Smooth(float* lvlPointer, float xpGained, float dFactor)
                 ConsoleOut("XP NOP  xp=%.8f, lvl=%.8f", xpGained, oldLvl);
             }
         }
-    }
-
-    if (r < 0x0fffffff) {
-        ShowStats();
     }
 }
 
@@ -736,10 +752,6 @@ void HK_AdjustLevel_Custom(float* lvlPointer, float xpGained, float dFactor)
             }
         }
     }
-
-    if (r < 0x0fffffff) {
-        ShowStats();
-    }
 }
 
 // take the lock on modData before calling these;
@@ -843,168 +855,174 @@ void MainThreadFunction(HMODULE hModule)
 			this_thread::sleep_for(chrono::milliseconds(100));
 		}
 	}
-	ConsoleOut("Hello World from KenshiSmoothXP");
-	ConsoleOut("");
 
-    //
-
-    lock_guard<mutex> lock(modDataMutex);
-
-    if (modConfig.modInitialized) {
-        ConsoleOut("Mod is already initialized, thread %d returning.", this_thread::get_id());
-        ConsoleOut("");
-        return;
-    }
-
-    char exePath[MAX_PATH];
-    GetModuleFileNameA(NULL, exePath, MAX_PATH);
-    string directory = filesystem::path(exePath).parent_path().string();
-    string exeName = filesystem::path(exePath).filename().generic_string();
-
-    string configPath = PathCombine(directory, modConfig.configName);
-    bool configExists = filesystem::exists(configPath);
-    if (configExists)
     {
-        // read the config
+        lock_guard<mutex> lock(modDataMutex);
 
-        CSimpleIniA ini;
-        ini.SetUnicode();
+        if (modConfig.modInitialized) {
+            ConsoleOut("Mod is already initialized, thread %d returning.", this_thread::get_id());
+            ConsoleOut("");
+            return;
+        }
 
-        modConfig.configPath = configPath;
-        modConfig.configLastEditTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
+        char exePath[MAX_PATH];
+        GetModuleFileNameA(NULL, exePath, MAX_PATH);
+        string directory = filesystem::path(exePath).parent_path().string();
+        string exeName = filesystem::path(exePath).filename().generic_string();
 
-        SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
-        if (rc == SI_OK)
+        string configPath = PathCombine(directory, modConfig.configName);
+        bool configExists = filesystem::exists(configPath);
+        if (configExists)
         {
-            modConfig.showConsole = !!ini.GetLongValue("Parameters", "ShowConsole", modConfig.showConsole);
+            // read the config
 
-            if (modConfig.showConsole) {
-                ConsoleOut("**** we would have created the console window here ****");
-                ConsoleOut("");
-            }
+            CSimpleIniA ini;
+            ini.SetUnicode();
 
-            auto lvlmultMethodData = ini.GetLongValue("Parameters", "LvlmultMethod", (long)modConfig.lvlmultMethod);
-            switch (lvlmultMethodData) {
-            case (long)LvlmultMethod::Vanilla:
-                modConfig.lvlmultMethod = LvlmultMethod::Vanilla;
-                break;
-            case (long)LvlmultMethod::Smooth:
-                modConfig.lvlmultMethod = LvlmultMethod::Smooth;
-                break;
-            case (long)LvlmultMethod::Custom:
-                modConfig.lvlmultMethod = LvlmultMethod::Custom;
-                break;
-            default:
+            modConfig.configPath = configPath;
+            modConfig.configLastEditTimestamp = filesystem::last_write_time(modConfig.configPath).time_since_epoch().count();
+
+            SI_Error rc = ini.LoadFile(modConfig.configPath.c_str());
+            if (rc == SI_OK)
+            {
+                modConfig.showConsole = !!ini.GetLongValue("Parameters", "ShowConsole", modConfig.showConsole);
+
                 if (modConfig.showConsole) {
-                    ConsoleOut("Unknown LvlmultMethod %d, setting to 0 (vanilla)", lvlmultMethodData);
+                    ConsoleOut("**** we would have created the console window here ****");
                     ConsoleOut("");
                 }
-                modConfig.lvlmultMethod = LvlmultMethod::Vanilla;
-                break;
-            }
 
-            auto transitionPointData = ini.GetDoubleValue("Parameters", "TransitionPoint", modConfig.transitionPoint);
-            if (transitionPointData < 0.0) {
+                auto lvlmultMethodData = ini.GetLongValue("Parameters", "LvlmultMethod", (long)modConfig.lvlmultMethod);
+                switch (lvlmultMethodData) {
+                case (long)LvlmultMethod::Vanilla:
+                    modConfig.lvlmultMethod = LvlmultMethod::Vanilla;
+                    break;
+                case (long)LvlmultMethod::Smooth:
+                    modConfig.lvlmultMethod = LvlmultMethod::Smooth;
+                    break;
+                case (long)LvlmultMethod::Custom:
+                    modConfig.lvlmultMethod = LvlmultMethod::Custom;
+                    break;
+                default:
+                    if (modConfig.showConsole) {
+                        ConsoleOut("Unknown LvlmultMethod %d, setting to 0 (vanilla)", lvlmultMethodData);
+                        ConsoleOut("");
+                    }
+                    modConfig.lvlmultMethod = LvlmultMethod::Vanilla;
+                    break;
+                }
+
+                auto transitionPointData = ini.GetDoubleValue("Parameters", "TransitionPoint", modConfig.transitionPoint);
+                if (transitionPointData < 0.0) {
+                    if (modConfig.showConsole) {
+                        ConsoleOut("TransitionPoint %f must be at least 0, setting to 0.0", transitionPointData);
+                        ConsoleOut("");
+                    }
+                    modConfig.transitionPoint = 0.0;
+                    modConfig.oneMinusACubed = 1.0;
+                }
+                else if (transitionPointData <= 1.0) {
+                    modConfig.transitionPoint = transitionPointData;
+                    const double oneMinusA = (1.0 - transitionPointData);
+                    modConfig.oneMinusACubed = oneMinusA * oneMinusA * oneMinusA;
+                }
+                else {
+                    if (modConfig.showConsole) {
+                        ConsoleOut("TransitionPoint %f must be at most 1, setting to 1.0", transitionPointData);
+                        ConsoleOut("");
+                    }
+                    modConfig.transitionPoint = 1.0;
+                    modConfig.oneMinusACubed = 0.0;
+                }
+
+                modConfig.showStats = ini.GetLongValue("Parameters", "ShowStats", modConfig.showStats);
+
                 if (modConfig.showConsole) {
-                    ConsoleOut("TransitionPoint %f must be at least 0, setting to 0.0", transitionPointData);
+                    ConsoleOut("Loaded configuration from %s", modConfig.configPath.c_str());
+                    ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
+                    ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
+                    ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
+                    ConsoleOut("  ShowStats       = %d", modConfig.showStats);
                     ConsoleOut("");
                 }
-                modConfig.transitionPoint = 0.0;
-                modConfig.oneMinusACubed = 1.0;
-            }
-            else if (transitionPointData <= 1.0) {
-                modConfig.transitionPoint = transitionPointData;
-                const double oneMinusA = (1.0 - transitionPointData);
-                modConfig.oneMinusACubed = oneMinusA * oneMinusA * oneMinusA;
             }
             else {
                 if (modConfig.showConsole) {
-                    ConsoleOut("TransitionPoint %f must be at most 1, setting to 1.0", transitionPointData);
+                    ConsoleOut("**** we would have created the console window here ****");
                     ConsoleOut("");
                 }
-                modConfig.transitionPoint = 1.0;
-                modConfig.oneMinusACubed = 0.0;
-            }
 
-            modConfig.showStats = ini.GetLongValue("Parameters", "ShowStats", modConfig.showStats);
-
-            if (modConfig.showConsole) {
-                ConsoleOut("Loaded configuration from %s", modConfig.configPath.c_str());
-                ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
-                ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
-                ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
-                ConsoleOut("  ShowStats       = %d", modConfig.showStats);
-                ConsoleOut("");
+                if (modConfig.showConsole) {
+                    ConsoleOut("Failed to load config from %s, error=%d", modConfig.configPath.c_str(), rc);
+                    ConsoleOut("");
+                    ConsoleOut("Default configuration:");
+                    ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
+                    ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
+                    ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
+                    ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+                    ConsoleOut("");
+                }
             }
         }
         else {
+            // use default settings, already loaded
+
+            modConfig.configPath = "";
+            modConfig.configLastEditTimestamp = 0;
+
             if (modConfig.showConsole) {
                 ConsoleOut("**** we would have created the console window here ****");
                 ConsoleOut("");
             }
 
-            if (modConfig.showConsole) {
-                ConsoleOut("Failed to load config from %s, error=%d", modConfig.configPath.c_str(), rc);
+            ConsoleOut("No config file found at '%s', using default configuration:", modConfig.configPath.c_str());
+            ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
+            ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
+            ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
+            ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+            ConsoleOut("");
+        }
+
+        //
+
+        DWORD relativeAddr = FindPatternInFile(exePath, LEVELING_FUNCTION_PATTERN, LEVELING_FUNCTION_MASK);
+        if (relativeAddr)
+        {
+            modData.TargetProcessAbsoluteAddr = (LPVOID)(relativeAddr + (DWORD_PTR)GetModuleHandleA(exeName.c_str()));
+            if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr))
+            {
+                ConsoleOut("Enabling hook...");
+                EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
+
+                ConsoleOut("  Target address: %16llx", modData.TargetProcessAbsoluteAddr);
+                ConsoleOut("  Original fn:    %16llx", modData.originalFunction);
+
+                ConsoleOut("Function successfully hooked. Do not close this window.");
                 ConsoleOut("");
-                ConsoleOut("Default configuration:");
-                ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
-                ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
-                ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
-                ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+            }
+            else {
+                ConsoleOut("Failed to set up hook.");
                 ConsoleOut("");
             }
         }
-    }
-    else {
-        // use default settings, already loaded
-
-        modConfig.configPath = "";
-        modConfig.configLastEditTimestamp = 0;
-
-        if (modConfig.showConsole) {
-            ConsoleOut("**** we would have created the console window here ****");
-            ConsoleOut("");
-        }
-
-        ConsoleOut("No config file found at '%s', using default configuration:", modConfig.configPath.c_str());
-        ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
-        ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
-        ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
-        ConsoleOut("  ShowStats       = %d", modConfig.showStats);
-        ConsoleOut("");
-    }
-
-    //
-
-    DWORD relativeAddr = FindPatternInFile(exePath, LEVELING_FUNCTION_PATTERN, LEVELING_FUNCTION_MASK);
-    if (relativeAddr)
-    {
-        modData.TargetProcessAbsoluteAddr = (LPVOID)(relativeAddr + (DWORD_PTR)GetModuleHandleA(exeName.c_str()));
-        if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr))
-        {
-            ConsoleOut("Enabling hook...");
-            EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
-
-            ConsoleOut("  Target address: %16llx", modData.TargetProcessAbsoluteAddr);
-            ConsoleOut("  Original fn:    %16llx", modData.originalFunction);
-
-            ConsoleOut("Function successfully hooked. Do not close this window.");
-            ConsoleOut("");
-        }
         else {
-            ConsoleOut("Failed to set up hook.");
+            ConsoleOut("Error: Cannot find target function in %s", exePath);
             ConsoleOut("");
         }
-    }
-    else {
-        ConsoleOut("Error: Cannot find target function in %s", exePath);
+
+        ConsoleOut("Initialization complete.");
         ConsoleOut("");
+
+        modConfig.modInitialized = TRUE;
     }
 
-    ConsoleOut("Initialization complete, thread %d returning.", this_thread::get_id());
-    ConsoleOut("");
-
-    modConfig.modInitialized = TRUE;
+    if (modConfig.showConsole) {
+        while (modConfig.showStats > 0)
+        {
+            this_thread::sleep_for(chrono::milliseconds(1000 * modConfig.showStats));
+            ShowStats();
+        }
+    }
 }
 
 extern "C" void __declspec(dllexport) dllStartPlugin(void)
