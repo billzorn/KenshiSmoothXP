@@ -851,7 +851,6 @@ void MainThreadFunction(HMODULE hModule)
 	while (waitForInit) {
 		{ lock_guard<mutex> lock(modDataMutex); waitForInit = modNeedsInit; }
 		if (waitForInit) {
-			ConsoleOut("sleep 100ms waiting for mod init...");
 			this_thread::sleep_for(chrono::milliseconds(100));
 		}
 	}
@@ -860,8 +859,6 @@ void MainThreadFunction(HMODULE hModule)
         lock_guard<mutex> lock(modDataMutex);
 
         if (modConfig.modInitialized) {
-            ConsoleOut("Mod is already initialized, thread %d returning.", this_thread::get_id());
-            ConsoleOut("");
             return;
         }
 
@@ -888,7 +885,8 @@ void MainThreadFunction(HMODULE hModule)
                 modConfig.showConsole = !!ini.GetLongValue("Parameters", "ShowConsole", modConfig.showConsole);
 
                 if (modConfig.showConsole) {
-                    ConsoleOut("**** we would have created the console window here ****");
+                    CreateConsoleWindow();
+                    ConsoleOut("**** KenshiSmoothXP ****");
                     ConsoleOut("");
                 }
 
@@ -948,7 +946,8 @@ void MainThreadFunction(HMODULE hModule)
             }
             else {
                 if (modConfig.showConsole) {
-                    ConsoleOut("**** we would have created the console window here ****");
+                    CreateConsoleWindow();
+                    ConsoleOut("**** KenshiSmoothXP ****");
                     ConsoleOut("");
                 }
 
@@ -971,7 +970,8 @@ void MainThreadFunction(HMODULE hModule)
             modConfig.configLastEditTimestamp = 0;
 
             if (modConfig.showConsole) {
-                ConsoleOut("**** we would have created the console window here ****");
+                CreateConsoleWindow();
+                ConsoleOut("**** KenshiSmoothXP ****");
                 ConsoleOut("");
             }
 
@@ -986,32 +986,40 @@ void MainThreadFunction(HMODULE hModule)
         //
 
         DWORD relativeAddr = FindPatternInFile(exePath, LEVELING_FUNCTION_PATTERN, LEVELING_FUNCTION_MASK);
-        if (relativeAddr)
-        {
+        if (relativeAddr) {
             modData.TargetProcessAbsoluteAddr = (LPVOID)(relativeAddr + (DWORD_PTR)GetModuleHandleA(exeName.c_str()));
-            if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr))
-            {
-                ConsoleOut("Enabling hook...");
+            if (SetupLevelingHook(modData.TargetProcessAbsoluteAddr)) {
+                if (modConfig.showConsole) {
+                    ConsoleOut("Enabling hook...");
+                }
+
                 EnableLevelingHook(modData.TargetProcessAbsoluteAddr);
 
-                ConsoleOut("  Target address: %16llx", modData.TargetProcessAbsoluteAddr);
-                ConsoleOut("  Original fn:    %16llx", modData.originalFunction);
-
-                ConsoleOut("Function successfully hooked. Do not close this window.");
-                ConsoleOut("");
+                if (modConfig.showConsole) {
+                    ConsoleOut("  Target address: %16llx", modData.TargetProcessAbsoluteAddr);
+                    ConsoleOut("  Original fn:    %16llx", modData.originalFunction);
+                    ConsoleOut("Function successfully hooked. Do not close this window.");
+                    ConsoleOut("");
+                }
             }
             else {
-                ConsoleOut("Failed to set up hook.");
-                ConsoleOut("");
+                if (modConfig.showConsole) {
+                    ConsoleOut("Failed to set up hook.");
+                    ConsoleOut("");
+                }
             }
         }
         else {
-            ConsoleOut("Error: Cannot find target function in %s", exePath);
-            ConsoleOut("");
+            if (modConfig.showConsole) {
+                ConsoleOut("Error: Cannot find target function in %s", exePath);
+                ConsoleOut("");
+            }
         }
 
-        ConsoleOut("Initialization complete.");
-        ConsoleOut("");
+        if (modConfig.showConsole) {
+            ConsoleOut("Initialization complete.");
+            ConsoleOut("");
+        }
 
         modConfig.modInitialized = TRUE;
     }
@@ -1041,20 +1049,14 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 	{
 		lock_guard<mutex> lock(modDataMutex);
 
-		CreateConsoleWindow();
-
-		ConsoleOut("DLL_PROCESS_ATTACH");
+		// CreateConsoleWindow();
+		// ConsoleOut("DLL_PROCESS_ATTACH");
 
 		if (modNeedsInit) {
 			pcg_extras::seed_seq_from<random_device> seed_source;
 			modData.rng.seed(seed_source);
-
-			ConsoleOut("-- thread id %d inited rng --", this_thread::get_id());
-
             modNeedsInit = FALSE;
 		}
-
-		ConsoleOut("");
 	}
 	break;
 	case DLL_THREAD_ATTACH:
@@ -1071,13 +1073,10 @@ BOOL APIENTRY DllMain( HMODULE hModule,
 	{
 		lock_guard<mutex> lock(modDataMutex);
 
-		ConsoleOut("DLL_PROCESS_DETACH");
+		// ConsoleOut("DLL_PROCESS_DETACH");
 
 		// not clear if this is doing anything, or if it even needs to...
 		DetachDLL(modData.TargetProcessAbsoluteAddr, hModule);
-
-		ConsoleOut("detached and unhooked...");
-		ConsoleOut("");
 	}
 	break;
 	}
