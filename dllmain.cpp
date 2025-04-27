@@ -20,6 +20,7 @@ public:
     double oneMinusACubed = (1.0 - 0.95) * (1.0 - 0.95) * (1.0 - 0.95);
     bool showConsole = TRUE;
     int32_t showStats = 0;
+    int32_t clearStatsOnPrint = 0;
 
     bool modInitialized = FALSE;
 } modConfig;
@@ -934,13 +935,15 @@ void MainThreadFunction(HMODULE hModule)
                 }
 
                 modConfig.showStats = ini.GetLongValue("Parameters", "ShowStats", modConfig.showStats);
+                modConfig.clearStatsOnPrint = !!ini.GetLongValue("Parameters", "ClearStatsOnPrint", modConfig.clearStatsOnPrint);
 
                 if (modConfig.showConsole) {
                     ConsoleOut("Loaded configuration from %s", modConfig.configPath.c_str());
-                    ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
-                    ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
-                    ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
-                    ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+                    ConsoleOut("  LvlmultMethod     = %d", (long)modConfig.lvlmultMethod);
+                    ConsoleOut("  TransitionPoint   = %.8f", modConfig.transitionPoint);
+                    ConsoleOut("  ShowConsole       = %d", modConfig.showConsole);
+                    ConsoleOut("  ShowStats         = %d", modConfig.showStats);
+                    ConsoleOut("  ClearStatsOnPrint = %d", modConfig.clearStatsOnPrint);
                     ConsoleOut("");
                 }
             }
@@ -955,10 +958,11 @@ void MainThreadFunction(HMODULE hModule)
                     ConsoleOut("Failed to load config from %s, error=%d", modConfig.configPath.c_str(), rc);
                     ConsoleOut("");
                     ConsoleOut("Default configuration:");
-                    ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
-                    ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
-                    ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
-                    ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+                    ConsoleOut("  LvlmultMethod     = %d", (long)modConfig.lvlmultMethod);
+                    ConsoleOut("  TransitionPoint   = %.8f", modConfig.transitionPoint);
+                    ConsoleOut("  ShowConsole       = %d", modConfig.showConsole);
+                    ConsoleOut("  ShowStats         = %d", modConfig.showStats);
+                    ConsoleOut("  ClearStatsOnPrint = %d", modConfig.clearStatsOnPrint);
                     ConsoleOut("");
                 }
             }
@@ -976,10 +980,11 @@ void MainThreadFunction(HMODULE hModule)
             }
 
             ConsoleOut("No config file found at '%s', using default configuration:", modConfig.configPath.c_str());
-            ConsoleOut("  LvlmultMethod   = %d", (long)modConfig.lvlmultMethod);
-            ConsoleOut("  TransitionPoint = %.8f", modConfig.transitionPoint);
-            ConsoleOut("  ShowConsole     = %d", modConfig.showConsole);
-            ConsoleOut("  ShowStats       = %d", modConfig.showStats);
+            ConsoleOut("  LvlmultMethod     = %d", (long)modConfig.lvlmultMethod);
+            ConsoleOut("  TransitionPoint   = %.8f", modConfig.transitionPoint);
+            ConsoleOut("  ShowConsole       = %d", modConfig.showConsole);
+            ConsoleOut("  ShowStats         = %d", modConfig.showStats);
+            ConsoleOut("  ClearStatsOnPrint = %d", modConfig.clearStatsOnPrint);
             ConsoleOut("");
         }
 
@@ -1029,6 +1034,9 @@ void MainThreadFunction(HMODULE hModule)
         {
             this_thread::sleep_for(chrono::milliseconds(1000 * modConfig.showStats));
             ShowStats();
+            if (modConfig.clearStatsOnPrint) {
+                ClearStats();
+            }
         }
     }
 }
